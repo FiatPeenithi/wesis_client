@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Immediate In-App Browser Interceptor (LINE, Messenger, Facebook, Instagram, WebViews) -->
+    <script>
+      (function () {
+        try {
+          var ua = navigator.userAgent || navigator.vendor || window.opera || '';
+          var isAndroid = /Android/i.test(ua);
+          var isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+
+          // Detect common in-app browsers
+          var isLine = /Line\//i.test(ua) || /\bLine\b/i.test(ua);
+          var isFb = /FBAV|FBAN|FB_IAB|FB4A|FBIOS/i.test(ua);
+          var isMessenger = /Messenger/i.test(ua) || /FB_IAB\/Orca-Android/i.test(ua) || /MessengerForiOS/i.test(ua);
+          var isInstagram = /Instagram/i.test(ua);
+          var isOtherApp = /MicroMessenger|Twitter|Snapchat|musical_ly|ByteLocale|ByteFullConfig|TikTok|KAKAOTALK/i.test(ua);
+          var isAndroidWV = isAndroid && (/; wv\b/i.test(ua) || (/Version\/[\d.]+/i.test(ua) && /Chrome\/[\d.]+/i.test(ua) && !/Mobile\/\w+ Safari/i.test(ua)));
+          var isIOSWV = isIOS && /WebKit/i.test(ua) && !/Safari/i.test(ua);
+
+          var isInApp = isLine || isFb || isMessenger || isInstagram || isOtherApp || isAndroidWV || isIOSWV;
+
+          if (isInApp) {
+            window.__IS_IN_APP_BROWSER__ = true;
+
+            // 1. LINE (iOS & Android): appending openExternalBrowser=1 causes LINE to spawn system browser
+            if (isLine) {
+              if (location.search.indexOf('openExternalBrowser=1') === -1) {
+                var sep = location.search ? '&' : '?';
+                var target = location.pathname + location.search + sep + 'openExternalBrowser=1' + location.hash;
+                location.replace(target);
+                return;
+              }
+            }
+
+            // 2. Android (Facebook, Messenger, Instagram, WebViews):
+            // Dispatch Chrome Intent immediately to launch Google Chrome
+            if (isAndroid) {
+              var cleanUrl = location.host + location.pathname + location.search + location.hash;
+              var intentUrl = 'intent://' + cleanUrl + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(location.href) + ';end';
+              location.href = intentUrl;
+            }
+          }
+        } catch (e) {
+          // Fail open on older parsers
+        }
+      })();
+    </script>
+    <!-- Global HTML error boundary: ES5-only, must parse on Chrome 60 WebViews. -->
+    <script>
+      (function () {
+        var shown = false;
+        var BOOT_FLAG = '__WESIS_BOOTED__';
+        function showFallback(msg) {
+          if (shown || window.__IS_IN_APP_BROWSER__) return;
+          shown = true;
+          try {
+            var root = document.getElementById('root');
+            if (root) root.style.display = 'none';
+            var old = document.getElementById('wesis-fatal');
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            var div = document.createElement('div');
+            div.id = 'wesis-fatal';
+            div.setAttribute('role', 'alert');
+            div.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0d0d0d;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px;';
+            var inner = document.createElement('div');
+            inner.style.cssText = 'max-width:420px;text-align:center;';
+            var h = document.createElement('h1');
+            h.style.cssText = 'font-size:20px;margin:0 0 8px;';
+            h.appendChild(document.createTextNode('Something went wrong'));
+            var p = document.createElement('p');
+            p.style.cssText = 'font-size:14px;opacity:.8;margin:0 0 8px;word-break:break-word;';
+            p.appendChild(document.createTextNode(msg || 'The app failed to start. This can happen on older browsers after an update.'));
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.appendChild(document.createTextNode('Clear Cache & Reload'));
+            btn.style.cssText = 'margin-top:12px;padding:12px 20px;font-size:15px;font-weight:700;border:0;border-radius:10px;background:#fff;color:#0d0d0d;cursor:pointer;';
+            btn.onclick = function () {
+              btn.disabled = true;
+              btn.firstChild.nodeValue = 'Clearing…';
+              var done = function () {
+                var u = location.pathname + (location.search ? location.search + '&' : '?') + 'v=' + Date.now();
+                location.replace(u);
+              };
+              try {
+                if ('serviceWorker' in navigator) {
+                  navigator.serviceWorker.getRegistrations().then(function (regs) {
+                    for (var i = 0; i < regs.length; i++) { try { regs[i].unregister(); } catch (e) {} }
+                    clearCaches(done);
+                  }, function () { clearCaches(done); });
+                } else {
+                  clearCaches(done);
+                }
+              } catch (e) { done(); }
+              function clearCaches(cb) {
+                try {
+                  if ('caches' in window) {
+                    caches.keys().then(function (keys) {
+                      var ps = [];
+                      for (var i = 0; i < keys.length; i++) { ps.push(caches.delete(keys[i])); }
+                      Promise.all(ps).then(cb, cb);
+                    }, cb);
+                  } else { cb(); }
+                } catch (e) { cb(); }
+                setTimeout(cb, 3000);
+              }
+            };
+            inner.appendChild(h);
+            inner.appendChild(p);
+            inner.appendChild(btn);
+            div.appendChild(inner);
+            (document.body || document.documentElement).appendChild(div);
+          } catch (e) {}
+        }
+        function handler(msg, src) {
+          try {
+            if (window[BOOT_FLAG]) return;
+            showFallback(typeof msg === 'string' ? msg : 'The app failed to start.');
+          } catch (e) {}
+        }
+        window.addEventListener('error', function (e) {
+          var msg = (e && e.message) || 'A runtime error occurred.';
+          // Ignore missing-asset noise; blank-screen JS crash is what matters.
+          handler(msg);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e && e.reason;
+          var msg = (r && (r.message || String(r))) || 'A runtime error occurred.';
+          handler(msg);
+        });
+        // Blank-screen detector: module bundle failed to boot (e.g. old WebView
+        // silently refusing type="module" or stale cached index.html).
+        window.addEventListener('DOMContentLoaded', function () {
+          setTimeout(function () {
+            try {
+              if (window[BOOT_FLAG] || window.__IS_IN_APP_BROWSER__) return;
+              var root = document.getElementById('root');
+              if (root && root.children.length === 0) {
+                showFallback('The app did not start. Your browser may be too old or cached files are outdated.');
+              }
+            } catch (e) {}
+          }, 8000);
+        });
+        window.__WESIS_SHOW_FATAL__ = showFallback;
+      })();
+    </script>
+    <link rel="icon" type="image/png" href="/wesis-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WESIS</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

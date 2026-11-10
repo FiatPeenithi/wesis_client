@@ -1,0 +1,323 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { useRouter, usePathname } from "next/navigation";
+import {
+  BookOpen,
+  User as UserIcon,
+  LogOut,
+  Home,
+  Phone,
+  X
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useUserStore, User } from "../app/lib/store";
+import { cn } from "../app/lib/utils";
+import { runNotificationChecks } from "../app/actions/sheets";
+
+// Mapping directly to real routes where possible
+export const MENU_ITEMS = [
+  { id: "dashboard", href: "/dashboard", label: "หน้าแรก", icon: Home },
+  { id: "library", href: "/library", label: "คลังความรู้", icon: BookOpen },
+  { id: "contact", href: "/contact", label: "ติดต่อ", icon: Phone },
+  { id: "settings", href: "/settings", label: "Profile", icon: UserIcon },
+];
+
+export function DesktopSidebar() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { logout } = useUserStore();
+
+  const handleLogout = () => {
+    logout();
+    router.push("/");
+  };
+
+  return (
+    <aside className="hidden md:flex flex-col w-[245px] xl:w-[335px] h-screen sticky top-0 border-r border-border bg-background px-3 py-10 z-50">
+      <div className="px-4 mb-10">
+        <Link href="/dashboard" className="flex items-center gap-3">
+          <div className="relative w-24 h-24 shrink-0">
+            <Image src="/wesis-icon.png" alt="WeSIS Logo" fill className="object-contain" />
+          </div>
+          <div className="flex flex-col">
+            <h2 className="font-bold text-2xl">
+              WESIS
+            </h2>
+            <p className="text-sm font-normal text-muted-foreground">quit together</p>
+          </div>
+        </Link>
+      </div>
+
+      <nav className="flex-1 space-y-2">
+        {MENU_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+          return (
+            <Link
+              href={item.href}
+              key={item.id}
+              className={cn(
+                "w-full flex items-center gap-4 px-4 py-4 rounded-xl transition-all group relative duration-200 active:scale-95",
+                isActive ? "font-bold" : "font-normal text-muted-foreground hover:bg-foreground/5"
+              )}
+            >
+              <Icon
+                className={cn(
+                  "w-6 h-6 transition-transform",
+                  isActive ? "scale-110 stroke-[3px]" : "group-hover:scale-110"
+                )}
+              />
+              <span className="text-base tracking-tight">{item.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="mt-auto px-2">
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-4 px-4 py-4 rounded-xl text-muted-foreground hover:bg-rose-50 hover:text-rose-500 transition-all group font-normal"
+        >
+          <LogOut className="w-6 h-6 group-hover:scale-110 transition-transform" />
+          <span className="text-base">ออกจากระบบ</span>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+
+export function BottomAppNav({ user }: { user: User }) {
+  const pathname = usePathname();
+
+  return (
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-background border-t border-border h-16 flex items-center justify-around px-2 z-50">
+      {MENU_ITEMS.map((item) => {
+        const Icon = item.icon;
+        const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        return (
+          <Link
+            key={item.id}
+            href={item.href}
+            className="flex flex-col items-center justify-center w-full h-full relative"
+          >
+            {item.id === "settings" ? (
+              <div className={cn(
+                "w-[40px] h-[40px] rounded-full overflow-hidden relative border-2 transition-all",
+                isActive ? "border-slate-900 scale-110" : "border-slate-300"
+              )}>
+                <Image src={`/avatar/${user.avatarId || 1}.jpg`} alt="Profile" fill className="object-cover" />
+              </div>
+            ) : (
+              <Icon
+                className={cn(
+                  "w-7 min-w-[28px] h-7 min-h-[28px] transition-all",
+                  isActive ? "stroke-[2.5px] scale-105" : "text-muted-foreground"
+                )}
+              />
+            )}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+export function AppLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { user, isAuthenticated } = useUserStore();
+  const [isMounted, setIsMounted] = useState(false);
+  const [showSurveyModal, setShowSurveyModal] = useState(false);
+  const [notification, setNotification] = useState<{ show: boolean; message: string; type: "INFO" | "SURVEY" }>({
+    show: false,
+    message: "",
+    type: "INFO",
+  });
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (isMounted) {
+      if (!isAuthenticated) {
+        router.push("/");
+      } else if (user?.type === 2 && pathname !== "/secondary-group") {
+        router.push("/secondary-group");
+      } else if (user?.type !== 2 && pathname === "/secondary-group") {
+        router.push("/dashboard");
+      }
+    }
+  }, [isAuthenticated, user, router, isMounted, pathname]);
+
+  useEffect(() => {
+    if (isMounted && user?.userId) {
+      const checkNotify = async () => {
+        try {
+          const { showToast, toastMessage, toastType, triggerPush } = await runNotificationChecks(user.userId);
+
+          // Handle Toast / Modal
+          if (showToast) {
+            if (toastType === "SURVEY") {
+              // Always show modal for survey as requested
+              setShowSurveyModal(true);
+            } else {
+              const dismissed = sessionStorage.getItem(`dismissed_toast_${toastMessage}`);
+              if (!dismissed) {
+                setNotification({ show: true, message: toastMessage, type: toastType });
+              }
+            }
+          } else {
+            // If no longer eligible (e.g. done), ensure closed
+            setShowSurveyModal(false);
+          }
+
+          // Handle Browser Notification (PWA Fallback)
+          if (triggerPush && "Notification" in window) {
+            if (Notification.permission === "granted" && document.visibilityState === "hidden") {
+              new Notification("WESIS", {
+                body: toastMessage,
+                icon: "/wesis-icon.png",
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Notify check failed:", e);
+        }
+      };
+      checkNotify();
+    }
+  }, [user?.userId, isMounted, pathname]);
+
+  if (!isMounted || !isAuthenticated || !user) {
+    return null; // Or a loading spinner
+  }
+
+  const dismissNotification = () => {
+    sessionStorage.setItem(`dismissed_toast_${notification.message}`, "true");
+    setNotification({ ...notification, show: false });
+  };
+
+  const requestPermission = async () => {
+    if ("Notification" in window) {
+      const p = await Notification.requestPermission();
+      if (p === "granted") {
+        new Notification("WESIS", {
+          body: "ขอบคุณที่อนุญาตให้พี่จริงใจดูแลคุณน้าา",
+          icon: "/wesis-icon.png",
+        });
+      }
+    }
+  };
+
+  const isLightMode = parseInt(user?.stage || '1') >= 5;
+
+  return (
+    <div className={cn(
+      "min-h-screen bg-background flex flex-col md:flex-row text-foreground font-sans selection:bg-yellow-400 selection:text-black transition-colors duration-700",
+      isLightMode && "light-mode"
+    )}>
+      <DesktopSidebar />
+      <main className="flex-1 flex flex-col min-h-screen pb-20 md:pb-0 relative">
+        <div className="flex-1 max-w-[935px] mx-auto w-full px-4 py-4 md:py-12">
+          {/* Global Notification Toast - For INFO messages */}
+          <AnimatePresence>
+            {notification.show && (
+              <motion.div
+                initial={{ y: -100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -100, opacity: 0 }}
+                className="fixed top-6 left-4 right-4 md:left-auto md:right-8 md:w-[350px] z-[100]"
+              >
+                <div className="p-4 rounded-2xl border shadow-2xl flex flex-col gap-3 backdrop-blur-3xl bg-yellow-400/20 border-yellow-400/30 text-yellow-400">
+                  <div className="flex items-start gap-3">
+                    <div className="shrink-0 p-2 rounded-full bg-black/20">
+                      <BookOpen className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 pr-6">
+                      <p className="text-sm font-bold leading-snug">{notification.message}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={dismissNotification}
+                    className="absolute top-3 right-3 p-1.5 rounded-full hover:bg-black/20 text-muted-foreground hover:text-foreground transition-all"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Survey Modal - Forced interaction */}
+          <AnimatePresence>
+            {showSurveyModal && (
+              <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-background/90 backdrop-blur-md"
+                />
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                  className="relative w-full max-w-sm bg-zinc-900 border border-emerald-500/30 rounded-[2.5rem] p-8 shadow-2xl shadow-emerald-500/10 overflow-hidden"
+                >
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
+
+                  <div className="flex flex-col items-center gap-6 text-center">
+                    <div className="space-y-3">
+                      <h3 className="text-2xl font-bold bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">
+                        ถึงเวลาทำแบบประเมินแล้วจ้า!
+                      </h3>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        น้องๆ ใช้งาน WESIS มาครบ 7 วันแล้วนะจ๊ะ พี่จริงใจรบกวนสละเวลาสักครู่เพื่อทำแบบประเมินหลังการใช้งานให้หน่อยน้าา
+                      </p>
+                    </div>
+
+                    <div className="w-full space-y-3 pt-4">
+                      <button
+                        onClick={() => {
+                          const surveyLink = "https://script.google.com/macros/s/AKfycbz7gdoet3ALYip5MuPNouan-nCupiBDfEnlFqlsXxVMe5zde_hlNeg4TpaMSDCLWIzT/exec";
+                          window.open(surveyLink, "_blank");
+                          setShowSurveyModal(false);
+                        }}
+                        className="w-full py-4 bg-emerald-500 text-black font-bold rounded-2xl hover:bg-emerald-400 transition-all active:scale-95 shadow-lg shadow-emerald-500/20"
+                      >
+                        ทำแบบประเมินตอนนี้
+                      </button>
+                      <button
+                        onClick={() => setShowSurveyModal(false)}
+                        className="w-full py-4 bg-foreground/5 text-muted-foreground text-sm font-medium rounded-2xl hover:bg-foreground/10 transition-all"
+                      >
+                        ไว้ทำตอนหลัง
+                      </button>
+                    </div>
+
+                    {typeof window !== "undefined" && "Notification" in window && Notification.permission !== "granted" && (
+                      <button
+                        onClick={requestPermission}
+                        className="text-[10px] text-emerald-500/60 uppercase tracking-tighter hover:text-emerald-400 underline transition-colors"
+                      >
+                        เปิดแจ้งเตือนรับข่าวสารจากพี่จริงใจ
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {children}
+        </div>
+        <BottomAppNav user={user} />
+      </main>
+    </div>
+  );
+}
